@@ -4,6 +4,7 @@ import 'package:http/http.dart' as http;
 import 'dart:convert';
 
 enum TableStatus { idle, loading, ready, error }
+
 enum ItemType {
   beer, coffee, nation, none;
 
@@ -27,14 +28,14 @@ enum ItemType {
 }
 
 class DataService {
-  static const MAX_N_ITEMS = 15;
-  static const MIN_N_ITEMS = 3;
-  static const DEFAULT_N_ITEMS = 7;
+  static const int MAX_N_ITEMS = 15;
+  static const int MIN_N_ITEMS = 3;
+  static const int DEFAULT_N_ITEMS = 7;
   static const List<int> itemCounts = [3, 7, 15];
 
   int _numberOfItems = DEFAULT_N_ITEMS;
 
-  set numberOfItems(n) {
+  set numberOfItems(int n) {
     _numberOfItems = n <= 0 ? MIN_N_ITEMS : n > MAX_N_ITEMS ? MAX_N_ITEMS : n;
   }
 
@@ -46,17 +47,17 @@ class DataService {
     'itemType': ItemType.none,
   });
 
-  void carregar(index) {
+  void carregar(int index) {
     final params = [ItemType.coffee, ItemType.beer, ItemType.nation];
     carregarPorTipo(params[index]);
   }
 
   void ordenarEstadoAtual(String propriedade, bool crescente) {
-    List objetos = tableStateNotifier.value['dataObjects'] ?? [];
+    List<dynamic> objetos = tableStateNotifier.value['dataObjects'] ?? [];
     if (objetos.isEmpty) return;
     Ordenador ord = Ordenador();
-    List objetosOrdenados = ord.ordenarFuderoso(objetos, DecididorBasico(propriedade, crescente));
-    emitirEstadoOrdenado(objetosOrdenados, propriedade);
+    List<dynamic> objetosOrdenados = ord.ordenarFuderoso(objetos, DecididorBasico(propriedade, crescente));
+    emitirEstadoOrdenado(objetosOrdenados, propriedade, crescente);
   }
 
   Uri montarUri(ItemType type) {
@@ -75,15 +76,15 @@ class DataService {
     return json;
   }
 
-  void emitirEstadoOrdenado(List objetosOrdenados, String propriedade) {
+  void emitirEstadoOrdenado(List<dynamic> objetosOrdenados, String propriedade, bool crescente) {
     var estado = tableStateNotifier.value;
     estado['dataObjects'] = objetosOrdenados;
     estado['sortCriteria'] = propriedade;
-    estado['ascending'] = true;
+    estado['ascending'] = crescente;
     tableStateNotifier.value = estado;
   }
 
-  void emitirEstadoPronto(ItemType type, var json) {
+  void emitirEstadoPronto(ItemType type, List<dynamic> json) {
     tableStateNotifier.value = {
       'itemType': type,
       'status': TableStatus.ready,
@@ -102,6 +103,7 @@ class DataService {
   }
 
   bool temRequisicaoEmCurso() => tableStateNotifier.value['status'] == TableStatus.loading;
+
   bool mudouTipoDeItemRequisitado(ItemType type) => tableStateNotifier.value['itemType'] != type;
 
   void carregarPorTipo(ItemType type) async {
@@ -115,7 +117,7 @@ class DataService {
   }
 }
 
-final dataService = DataService();
+final DataService dataService = DataService();
 
 void main() {
   MyApp app = MyApp();
@@ -138,14 +140,14 @@ class MyApp extends StatelessWidget {
                 return PopupMenuButton<int>(
                   itemBuilder: (_) => DataService.itemCounts
                       .map(
-                        (num) => CheckedPopupMenuItem<int>(
+                        (int num) => CheckedPopupMenuItem<int>(
                           value: num,
                           checked: num == dataService.numberOfItems,
                           child: Text("Carregar $num itens por vez"),
                         ),
                       )
                       .toList(),
-                  onSelected: (number) {
+                  onSelected: (int number) {
                     dataService.numberOfItems = number;
                   },
                 );
@@ -158,9 +160,9 @@ class MyApp extends StatelessWidget {
           builder: (_, value, __) {
             switch (value['status']) {
               case TableStatus.idle:
-                return Center(child: Text("Toque em algum botão"));
+                return const Center(child: Text("Toque em algum botão"));
               case TableStatus.loading:
-                return Center(child: CircularProgressIndicator());
+                return const Center(child: CircularProgressIndicator());
               case TableStatus.ready:
                 return SingleChildScrollView(
                   scrollDirection: Axis.horizontal,
@@ -174,9 +176,9 @@ class MyApp extends StatelessWidget {
                   ),
                 );
               case TableStatus.error:
-                return Center(child: Text("Lascou"));
+                return const Center(child: Text("Lascou"));
               default:
-                return Center(child: Text("..."));
+                return const Center(child: Text("..."));
             }
           },
         ),
@@ -197,7 +199,7 @@ class NewNavBar extends HookWidget {
     var state = useState(0);
 
     return BottomNavigationBar(
-      onTap: (index) {
+      onTap: (int index) {
         state.value = index;
         _itemSelectedCallback(index);
       },
@@ -221,7 +223,7 @@ class NewNavBar extends HookWidget {
 }
 
 class DataTableWidget extends StatelessWidget {
-  final List jsonObjects;
+  final List<dynamic> jsonObjects;
   final List<String> columnNames;
   final List<String> propertyNames;
 
@@ -236,13 +238,13 @@ class DataTableWidget extends StatelessWidget {
     return DataTable(
       columns: columnNames
           .map(
-            (name) => DataColumn(
-              onSort: (columnIndex, ascending) =>
+            (String name) => DataColumn(
+              onSort: (int columnIndex, bool ascending) =>
                   dataService.ordenarEstadoAtual(propertyNames[columnIndex], ascending),
               label: Expanded(
                 child: Text(
                   name,
-                  style: TextStyle(fontStyle: FontStyle.italic),
+                  style: const TextStyle(fontStyle: FontStyle.italic),
                 ),
               ),
             ),
@@ -250,10 +252,10 @@ class DataTableWidget extends StatelessWidget {
           .toList(),
       rows: jsonObjects
           .map(
-            (obj) => DataRow(
+            (dynamic obj) => DataRow(
               cells: propertyNames
                   .map(
-                    (propName) => DataCell(Text(obj[propName])),
+                    (String propName) => DataCell(Text(obj[propName])),
                   )
                   .toList(),
             ),
@@ -263,6 +265,9 @@ class DataTableWidget extends StatelessWidget {
   }
 }
 
+abstract class Decididor {
+  bool precisaTrocarAtualPeloProximo(dynamic atual, dynamic proximo);
+}
 
 class DecididorBasico implements Decididor {
   final String propriedade;
@@ -271,37 +276,18 @@ class DecididorBasico implements Decididor {
   DecididorBasico(this.propriedade, this.crescente);
 
   @override
-  bool precisaTrocarAtualPeloProximo(atual, proximo) {
+  bool precisaTrocarAtualPeloProximo(dynamic atual, dynamic proximo) {
     if (crescente) {
       return atual[propriedade].compareTo(proximo[propriedade]) > 0;
     } else {
       return atual[propriedade].compareTo(proximo[propriedade]) < 0;
     }
   }
-} 
-
-
-class funcionarioDoMes extends Decididor{  
-     final String propriedade; 
-     final bool crescente;
-     FuncionariodoMes(this.propriedade,[this.crescente = true]);
-
-     @override 
-     bool precisaTrocarAtualPeloProximo(atual,proximo){ 
-       try{  
-          final ordemCorreta = crescente? [atual,proximo]: [proximo, atual];
-          return ordemCorreta[0][propriedade].compareTo(ordemCorreta[1][propriedade])>0;
-       }catch(error){ 
-         return false;
-       }
-     }
-
-
 }
 
 class Ordenador {
-  List ordenarFuderoso(List objetos, Decididor decididor) {
-    List itensOrdenados = List.of(objetos);
+  List ordenarFuderoso(List<dynamic> objetos, Decididor decididor) {
+    List<dynamic> itensOrdenados = List.of(objetos);
     bool trocouAoMenosUm;
 
     do {
