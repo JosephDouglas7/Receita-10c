@@ -263,9 +263,6 @@ class DataTableWidget extends StatelessWidget {
   }
 }
 
-abstract class Decididor {
-  bool precisaTrocarAtualPeloProximo(dynamic atual, dynamic proximo);
-}
 
 class DecididorBasico implements Decididor {
   final String propriedade;
@@ -284,11 +281,16 @@ class DecididorBasico implements Decididor {
 } 
 
 
-class funcionarioDoMes extends Decididor{ 
+class funcionarioDoMes extends Decididor{  
+     final String propriedade; 
+     final bool crescente;
+     FuncionariodoMes(this.propriedade,[this.crescente = true]);
+
      @override 
      bool precisaTrocarAtualPeloProximo(atual,proximo){ 
-       try{ 
-          return atual["name"].compareTo(proximo["name"])>0;
+       try{  
+          final ordemCorreta = crescente? [atual,proximo]: [proximo, atual];
+          return ordemCorreta[0][propriedade].compareTo(ordemCorreta[1][propriedade])>0;
        }catch(error){ 
          return false;
        }
