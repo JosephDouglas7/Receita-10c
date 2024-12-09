@@ -1,0 +1,322 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_hooks/flutter_hooks.dart';
+import 'package:http/http.dart' as http;
+import 'dart:convert';
+
+enum TableStatus { idle, loading, ready, error }
+enum ItemType {
+  beer, coffee, nation, none;
+
+  String get asString => '$name';
+
+  List<String> get columns => this == coffee
+      ? ["Nome", "Origem", "Tipo"]
+      : this == beer
+          ? ["Nome", "Estilo", "IBU"]
+          : this == nation
+              ? ["Nome", "Capital", "Idioma", "Esporte"]
+              : [];
+
+  List<String> get properties => this == coffee
+      ? ["blend_name", "origin", "variety"]
+      : this == beer
+          ? ["name", "style", "ibu"]
+          : this == nation
+              ? ["nationality", "capital", "language", "national_sport"]
+              : [];
+}
+
+class DataService {
+  static const MAX_N_ITEMS = 15;
+  static const MIN_N_ITEMS = 3;
+  static const DEFAULT_N_ITEMS = 7;
+  static const List<int> itemCounts = [3, 7, 15];
+
+  int _numberOfItems = DEFAULT_N_ITEMS;
+
+  set numberOfItems(n) {
+    _numberOfItems = n <= 0 ? MIN_N_ITEMS : n > MAX_N_ITEMS ? MAX_N_ITEMS : n;
+  }
+
+  int get numberOfItems => _numberOfItems;
+
+  final ValueNotifier<Map<String, dynamic>> tableStateNotifier = ValueNotifier({
+    'status': TableStatus.idle,
+    'dataObjects': [],
+    'itemType': ItemType.none,
+  });
+
+  void carregar(index) {
+    final params = [ItemType.coffee, ItemType.beer, ItemType.nation];
+    carregarPorTipo(params[index]);
+  }
+
+  void ordenarEstadoAtual(String propriedade, bool crescente) {
+    List objetos = tableStateNotifier.value['dataObjects'] ?? [];
+    if (objetos.isEmpty) return;
+    Ordenador ord = Ordenador();
+    List objetosOrdenados = ord.ordenarFuderoso(objetos, DecididorBasico(propriedade, crescente));
+    emitirEstadoOrdenado(objetosOrdenados, propriedade);
+  }
+
+  Uri montarUri(ItemType type) {
+    return Uri(
+      scheme: 'https',
+      host: 'random-data-api.com',
+      path: 'api/${type.asString}/random_${type.asString}',
+      queryParameters: {'size': '$_numberOfItems'},
+    );
+  }
+
+  Future<List<dynamic>> acessarApi(Uri uri) async {
+    var jsonString = await http.read(uri);
+    var json = jsonDecode(jsonString);
+    json = [...tableStateNotifier.value['dataObjects'], ...json];
+    return json;
+  }
+
+  void emitirEstadoOrdenado(List objetosOrdenados, String propriedade) {
+    var estado = tableStateNotifier.value;
+    estado['dataObjects'] = objetosOrdenados;
+    estado['sortCriteria'] = propriedade;
+    estado['ascending'] = true;
+    tableStateNotifier.value = estado;
+  }
+
+  void emitirEstadoPronto(ItemType type, var json) {
+    tableStateNotifier.value = {
+      'itemType': type,
+      'status': TableStatus.ready,
+      'dataObjects': json,
+      'propertyNames': type.properties,
+      'columnNames': type.columns
+    };
+  }
+
+  void emitirEstadoCarregando(ItemType type) {
+    tableStateNotifier.value = {
+      'status': TableStatus.loading,
+      'dataObjects': [],
+      'itemType': type,
+    };
+  }
+
+  bool temRequisicaoEmCurso() => tableStateNotifier.value['status'] == TableStatus.loading;
+  bool mudouTipoDeItemRequisitado(ItemType type) => tableStateNotifier.value['itemType'] != type;
+
+  void carregarPorTipo(ItemType type) async {
+    if (temRequisicaoEmCurso()) return;
+    if (mudouTipoDeItemRequisitado(type)) {
+      emitirEstadoCarregando(type);
+    }
+    var uri = montarUri(type);
+    var json = await acessarApi(uri);
+    emitirEstadoPronto(type, json);
+  }
+}
+
+final dataService = DataService();
+
+void main() {
+  MyApp app = MyApp();
+  runApp(app);
+}
+
+class MyApp extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      theme: ThemeData(primarySwatch: Colors.deepPurple),
+      debugShowCheckedModeBanner: false,
+      home: Scaffold(
+        appBar: AppBar(
+          title: const Text("Dicas"),
+          actions: [
+            ValueListenableBuilder(
+              valueListenable: dataService.tableStateNotifier,
+              builder: (_, value, __) {
+                return PopupMenuButton<int>(
+                  itemBuilder: (_) => DataService.itemCounts
+                      .map(
+                        (num) => CheckedPopupMenuItem<int>(
+                          value: num,
+                          checked: num == dataService.numberOfItems,
+                          child: Text("Carregar $num itens por vez"),
+                        ),
+                      )
+                      .toList(),
+                  onSelected: (number) {
+                    dataService.numberOfItems = number;
+                  },
+                );
+              },
+            ),
+          ],
+        ),
+        body: ValueListenableBuilder(
+          valueListenable: dataService.tableStateNotifier,
+          builder: (_, value, __) {
+            switch (value['status']) {
+              case TableStatus.idle:
+                return Center(child: Text("Toque em algum botão"));
+              case TableStatus.loading:
+                return Center(child: CircularProgressIndicator());
+              case TableStatus.ready:
+                return SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.vertical,
+                    child: DataTableWidget(
+                      jsonObjects: value['dataObjects'],
+                      propertyNames: value['propertyNames'],
+                      columnNames: value['columnNames'],
+                    ),
+                  ),
+                );
+              case TableStatus.error:
+                return Center(child: Text("Lascou"));
+              default:
+                return Center(child: Text("..."));
+            }
+          },
+        ),
+        bottomNavigationBar: NewNavBar(itemSelectedCallback: dataService.carregar),
+      ),
+    );
+  }
+}
+
+class NewNavBar extends HookWidget {
+  final void Function(int) _itemSelectedCallback;
+
+  NewNavBar({required void Function(int) itemSelectedCallback})
+      : _itemSelectedCallback = itemSelectedCallback;
+
+  @override
+  Widget build(BuildContext context) {
+    var state = useState(0);
+
+    return BottomNavigationBar(
+      onTap: (index) {
+        state.value = index;
+        _itemSelectedCallback(index);
+      },
+      currentIndex: state.value,
+      items: const [
+        BottomNavigationBarItem(
+          label: "Cafés",
+          icon: Icon(Icons.coffee_outlined),
+        ),
+        BottomNavigationBarItem(
+          label: "Cervejas",
+          icon: Icon(Icons.local_drink_outlined),
+        ),
+        BottomNavigationBarItem(
+          label: "Nações",
+          icon: Icon(Icons.flag_outlined),
+        ),
+      ],
+    );
+  }
+}
+
+class DataTableWidget extends StatelessWidget {
+  final List jsonObjects;
+  final List<String> columnNames;
+  final List<String> propertyNames;
+
+  DataTableWidget({
+    this.jsonObjects = const [],
+    this.columnNames = const [],
+    this.propertyNames = const [],
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return DataTable(
+      columns: columnNames
+          .map(
+            (name) => DataColumn(
+              onSort: (columnIndex, ascending) =>
+                  dataService.ordenarEstadoAtual(propertyNames[columnIndex], ascending),
+              label: Expanded(
+                child: Text(
+                  name,
+                  style: TextStyle(fontStyle: FontStyle.italic),
+                ),
+              ),
+            ),
+          )
+          .toList(),
+      rows: jsonObjects
+          .map(
+            (obj) => DataRow(
+              cells: propertyNames
+                  .map(
+                    (propName) => DataCell(Text(obj[propName])),
+                  )
+                  .toList(),
+            ),
+          )
+          .toList(),
+    );
+  }
+}
+
+abstract class Decididor {
+  bool precisaTrocarAtualPeloProximo(dynamic atual, dynamic proximo);
+}
+
+class DecididorBasico implements Decididor {
+  final String propriedade;
+  final bool crescente;
+
+  DecididorBasico(this.propriedade, this.crescente);
+
+  @override
+  bool precisaTrocarAtualPeloProximo(atual, proximo) {
+    if (crescente) {
+      return atual[propriedade].compareTo(proximo[propriedade]) > 0;
+    } else {
+      return atual[propriedade].compareTo(proximo[propriedade]) < 0;
+    }
+  }
+} 
+
+
+class funcionarioDoMes extends Decididor{ 
+     @override 
+     bool precisaTrocarAtualPeloProximo(atual,proximo){ 
+       try{ 
+          return atual["name"].compareTo(proximo["name"])>0;
+       }catch(error){ 
+         return false;
+       }
+     }
+
+
+}
+
+class Ordenador {
+  List ordenarFuderoso(List objetos, Decididor decididor) {
+    List itensOrdenados = List.of(objetos);
+    bool trocouAoMenosUm;
+
+    do {
+      trocouAoMenosUm = false;
+      for (int i = 0; i < itensOrdenados.length - 1; i++) {
+        var atual = itensOrdenados[i];
+        var proximo = itensOrdenados[i + 1];
+
+        if (decididor.precisaTrocarAtualPeloProximo(atual, proximo)) {
+          var aux = itensOrdenados[i];
+          itensOrdenados[i] = itensOrdenados[i + 1];
+          itensOrdenados[i + 1] = aux;
+          trocouAoMenosUm = true;
+        }
+      }
+    } while (trocouAoMenosUm);
+
+    return itensOrdenados;
+  }
+}
