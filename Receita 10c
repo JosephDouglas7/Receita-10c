@@ -1,6 +1,5 @@
 Feito com ajuda do copilot para correção de erros de copilação: https://copilot.microsoft.com/
 
-
 import 'package:flutter/material.dart';
 import 'package:flutter_hooks/flutter_hooks.dart';
 import 'package:http/http.dart' as http;
@@ -9,7 +8,10 @@ import 'dart:convert';
 enum TableStatus { idle, loading, ready, error }
 
 enum ItemType {
-  beer, coffee, nation, none;
+  beer,
+  coffee,
+  nation,
+  none;
 
   String get asString => '$name';
 
@@ -48,6 +50,8 @@ class DataService {
     'status': TableStatus.idle,
     'dataObjects': [],
     'itemType': ItemType.none,
+    'sortColumnIndex': 0,
+    'sortAscending': true,
   });
 
   void carregar(int index) {
@@ -55,46 +59,99 @@ class DataService {
     carregarPorTipo(params[index]);
   }
 
-  void ordenarEstadoAtual(String propriedade, bool crescente) {
+  void ordenarEstadoAtual(String propriedade, int columnIndex, bool crescente) {
     List<dynamic> objetos = tableStateNotifier.value['dataObjects'] ?? [];
     if (objetos.isEmpty) return;
     Ordenador ord = Ordenador();
-    List<dynamic> objetosOrdenados = ord.ordenarFuderoso(objetos, DecididorBasico(propriedade, crescente));
-    emitirEstadoOrdenado(objetosOrdenados, propriedade, crescente);
+    bool compare(dynamic a, dynamic b) {
+      if (crescente) {
+        return a[propriedade].compareTo(b[propriedade]) > 0;
+      } else {
+        return a[propriedade].compareTo(b[propriedade]) < 0;
+      }
+    }
+    List<dynamic> objetosOrdenados = ord.ordenarComCallback(objetos, compare);
+    emitirEstadoOrdenado(objetosOrdenados, columnIndex, propriedade, crescente);
   }
 
-  Uri montarUri(ItemType type) {
-    return Uri(
+  Future<List<dynamic>> acessarApiCafe() async {
+    var uri = Uri(
       scheme: 'https',
       host: 'random-data-api.com',
-      path: 'api/${type.asString}/random_${type.asString}',
+      path: 'api/coffee/random_coffee',
       queryParameters: {'size': '$_numberOfItems'},
     );
-  }
-
-  Future<List<dynamic>> acessarApi(Uri uri) async {
     var jsonString = await http.read(uri);
     var json = jsonDecode(jsonString);
-    json = [...tableStateNotifier.value['dataObjects'], ...json];
     return json;
   }
 
-  void emitirEstadoOrdenado(List<dynamic> objetosOrdenados, String propriedade, bool crescente) {
+  Future<List<dynamic>> acessarApiCerveja() async {
+    var uri = Uri(
+      scheme: 'https',
+      host: 'random-data-api.com',
+      path: 'api/beer/random_beer',
+      queryParameters: {'size': '$_numberOfItems'},
+    );
+    var jsonString = await http.read(uri);
+    var json = jsonDecode(jsonString);
+    return json;
+  }
+
+  Future<List<dynamic>> acessarApiNacoes() async {
+    var uri = Uri(
+      scheme: 'https',
+      host: 'random-data-api.com',
+      path: 'api/nation/random_nation',
+      queryParameters: {'size': '$_numberOfItems'},
+    );
+    var jsonString = await http.read(uri);
+    var json = jsonDecode(jsonString);
+    return json;
+  }
+
+  void carregarPorTipo(ItemType type) async {
+    if (temRequisicaoEmCurso()) return;
+
+    if (mudouTipoDeItemRequisitado(type)) {
+      emitirEstadoCarregando(type);
+    }
+
+    switch (type) {
+      case ItemType.coffee:
+        var json = await acessarApiCafe();
+        emitirEstadoPronto(type, json);
+        break;
+      case ItemType.beer:
+        var json = await acessarApiCerveja();
+        emitirEstadoPronto(type, json);
+        break;
+      case ItemType.nation:
+        var json = await acessarApiNacoes();
+        emitirEstadoPronto(type, json);
+        break;
+      default:
+        emitirEstadoPronto(type, []);
+        break;
+    }
+  }
+
+  void emitirEstadoOrdenado(
+      List<dynamic> objetosOrdenados, int columnIndex, String propriedade, bool crescente) {
     var estado = tableStateNotifier.value;
     estado['dataObjects'] = objetosOrdenados;
     estado['sortCriteria'] = propriedade;
-    estado['ascending'] = crescente;
-    tableStateNotifier.value = estado;
+    estado['sortColumnIndex'] = columnIndex;
+    estado['sortAscending'] = crescente;
+    tableStateNotifier.value = { ...estado };
   }
 
-  void emitirEstadoPronto(ItemType type, List<dynamic> json) {
-    tableStateNotifier.value = {
-      'itemType': type,
-      'status': TableStatus.ready,
-      'dataObjects': json,
-      'propertyNames': type.properties,
-      'columnNames': type.columns
-    };
+  bool temRequisicaoEmCurso() {
+    return tableStateNotifier.value['status'] == TableStatus.loading;
+  }
+
+  bool mudouTipoDeItemRequisitado(ItemType type) {
+    return tableStateNotifier.value['itemType'] != type;
   }
 
   void emitirEstadoCarregando(ItemType type) {
@@ -105,20 +162,52 @@ class DataService {
     };
   }
 
-  bool temRequisicaoEmCurso() => tableStateNotifier.value['status'] == TableStatus.loading;
+  void emitirEstadoPronto(ItemType type, List<dynamic> json) {
+    tableStateNotifier.value = {
+      'itemType': type,
+      'status': TableStatus.ready,
+      'dataObjects': json,
+      'propertyNames': type.properties,
+      'columnNames': type.columns,
+      'sortColumnIndex': 0,
+      'sortAscending': true,
+    };
+  }
 
-  bool mudouTipoDeItemRequisitado(ItemType type) => tableStateNotifier.value['itemType'] != type;
-
-  void carregarPorTipo(ItemType type) async {
-    if (temRequisicaoEmCurso()) return;
-    if (mudouTipoDeItemRequisitado(type)) {
-      emitirEstadoCarregando(type);
+  List<dynamic> filtrarComCallback(List<dynamic> objetos, String query, bool Function(dynamic, String) callback) {
+    List<dynamic> itensFiltrados = [];
+    for (var item in objetos) {
+      if (callback(item, query)) {
+        itensFiltrados.add(item);
+      }
     }
-    var uri = montarUri(type);
-    var json = await acessarApi(uri);
-    emitirEstadoPronto(type, json);
+    return itensFiltrados;
+  }
+
+  void filtrarEstadoAtual(String query) {
+    if (query.length < 3) {
+      return;
+    }
+
+    List<dynamic> objetos = tableStateNotifier.value['dataObjects'] ?? [];
+    if (objetos.isEmpty) return;
+  
+    Filtrador filtro = FiltradorBasicoJSON('name'); // ajusta propriedade conforme necessidade
+    List<dynamic> objetosFiltrados = filtrarComCallback(objetos, query, filtro.deveIncluir);
+    emitirEstadoFiltrado(objetosFiltrados);
+  } 
+
+
+  void emitirEstadoFiltrado(List<dynamic> objetosFiltrados) {
+    var estado = tableStateNotifier.value;
+    estado['dataObjects'] = objetosFiltrados;
+    tableStateNotifier.value = { ...estado };
   }
 }
+
+
+
+
 
 final DataService dataService = DataService();
 
@@ -156,6 +245,25 @@ class MyApp extends StatelessWidget {
                 );
               },
             ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Center(
+                child: Container(
+                  width: 200,
+                  child: TextField(
+                    onChanged: (value) {
+                      dataService.filtrarEstadoAtual(value);
+                    },
+                    decoration: InputDecoration(
+                      hintText: "Pesquisar...",
+                      border: InputBorder.none,
+                      fillColor: Colors.white,
+                      filled: true,
+                    ),
+                  ),
+                ),
+              ),
+            ),
           ],
         ),
         body: ValueListenableBuilder(
@@ -173,8 +281,8 @@ class MyApp extends StatelessWidget {
                     scrollDirection: Axis.vertical,
                     child: DataTableWidget(
                       jsonObjects: value['dataObjects'],
-                      propertyNames: value['propertyNames'],
                       columnNames: value['columnNames'],
+                      propertyNames: value['propertyNames'],
                     ),
                   ),
                 );
@@ -190,6 +298,7 @@ class MyApp extends StatelessWidget {
     );
   }
 }
+
 
 class NewNavBar extends HookWidget {
   final void Function(int) _itemSelectedCallback;
@@ -225,6 +334,7 @@ class NewNavBar extends HookWidget {
   }
 }
 
+
 class DataTableWidget extends StatelessWidget {
   final List<dynamic> jsonObjects;
   final List<String> columnNames;
@@ -238,76 +348,46 @@ class DataTableWidget extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return DataTable(
-      columns: columnNames
-          .map(
-            (String name) => DataColumn(
-              onSort: (int columnIndex, bool ascending) =>
-                  dataService.ordenarEstadoAtual(propertyNames[columnIndex], ascending),
-              label: Expanded(
-                child: Text(
-                  name,
-                  style: const TextStyle(fontStyle: FontStyle.italic),
+    return ValueListenableBuilder(
+      valueListenable: dataService.tableStateNotifier,
+      builder: (context, value, child) {
+        return DataTable(
+          sortColumnIndex: value['sortColumnIndex'],
+          sortAscending: value['sortAscending'],
+          columns: columnNames
+              .map(
+                (String name) => DataColumn(
+                  onSort: (int columnIndex, bool ascending) {
+                    dataService.ordenarEstadoAtual(propertyNames[columnIndex], columnIndex, ascending);
+                    dataService.tableStateNotifier.value = {
+                      ...dataService.tableStateNotifier.value,
+                      'sortColumnIndex': columnIndex,
+                      'sortAscending': ascending,
+                    };
+                  },
+                  label: Expanded(
+                    child: Text(
+                      name,
+                      style: const TextStyle(fontStyle: FontStyle.italic),
+                    ),
+                  ),
                 ),
-              ),
-            ),
-          )
-          .toList(),
-      rows: jsonObjects
-          .map(
-            (dynamic obj) => DataRow(
-              cells: propertyNames
-                  .map(
-                    (String propName) => DataCell(Text(obj[propName])),
-                  )
-                  .toList(),
-            ),
-          )
-          .toList(),
+              )
+              .toList(),
+          rows: jsonObjects
+              .map(
+                (dynamic obj) => DataRow(
+                  cells: propertyNames
+                      .map(
+                        (String propName) => DataCell(Text(obj[propName])),
+                      )
+                      .toList(),
+                ),
+              )
+              .toList(),
+        );
+      },
     );
   }
 }
 
-abstract class Decididor {
-  bool precisaTrocarAtualPeloProximo(dynamic atual, dynamic proximo);
-}
-
-class DecididorBasico implements Decididor {
-  final String propriedade;
-  final bool crescente;
-
-  DecididorBasico(this.propriedade, this.crescente);
-
-  @override
-  bool precisaTrocarAtualPeloProximo(dynamic atual, dynamic proximo) {
-    if (crescente) {
-      return atual[propriedade].compareTo(proximo[propriedade]) > 0;
-    } else {
-      return atual[propriedade].compareTo(proximo[propriedade]) < 0;
-    }
-  }
-}
-
-class Ordenador {
-  List ordenarFuderoso(List<dynamic> objetos, Decididor decididor) {
-    List<dynamic> itensOrdenados = List.of(objetos);
-    bool trocouAoMenosUm;
-
-    do {
-      trocouAoMenosUm = false;
-      for (int i = 0; i < itensOrdenados.length - 1; i++) {
-        var atual = itensOrdenados[i];
-        var proximo = itensOrdenados[i + 1];
-
-        if (decididor.precisaTrocarAtualPeloProximo(atual, proximo)) {
-          var aux = itensOrdenados[i];
-          itensOrdenados[i] = itensOrdenados[i + 1];
-          itensOrdenados[i + 1] = aux;
-          trocouAoMenosUm = true;
-        }
-      }
-    } while (trocouAoMenosUm);
-
-    return itensOrdenados;
-  }
-}
