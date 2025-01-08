@@ -32,6 +32,7 @@ enum ItemType {
               : [];
 }
 
+
 class DataService {
   static const int MAX_N_ITEMS = 15;
   static const int MIN_N_ITEMS = 3;
@@ -62,16 +63,65 @@ class DataService {
   void ordenarEstadoAtual(String propriedade, int columnIndex, bool crescente) {
     List<dynamic> objetos = tableStateNotifier.value['dataObjects'] ?? [];
     if (objetos.isEmpty) return;
-    Ordenador ord = Ordenador();
-    bool compare(dynamic a, dynamic b) {
-      if (crescente) {
-        return a[propriedade].compareTo(b[propriedade]) > 0;
-      } else {
-        return a[propriedade].compareTo(b[propriedade]) < 0;
-      }
+    List<dynamic> objetosOrdenados = objetos;
+    if (crescente) {
+      objetosOrdenados.sort((a, b) => a[propriedade].compareTo(b[propriedade]));
+    } else {
+      objetosOrdenados.sort((a, b) => b[propriedade].compareTo(a[propriedade]));
     }
-    List<dynamic> objetosOrdenados = ord.ordenarComCallback(objetos, compare);
     emitirEstadoOrdenado(objetosOrdenados, columnIndex, propriedade, crescente);
+  }
+
+  void filtrarEstadoAtual(String query) {
+    if (query.length < 3) {
+      return;
+    }
+
+    List<dynamic> objetos = tableStateNotifier.value['dataObjects'] ?? [];
+    if (objetos.isEmpty) return;
+
+    List<dynamic> objetosFiltrados = objetos.where((item) {
+      return item['name'].toLowerCase().contains(query.toLowerCase());
+    }).toList();
+    emitirEstadoFiltrado(objetosFiltrados);
+  }
+
+  void emitirEstadoFiltrado(List<dynamic> objetosFiltrados) {
+    var estado = tableStateNotifier.value;
+    estado['dataObjects'] = objetosFiltrados;
+    tableStateNotifier.value = { ...estado };
+  }
+
+  Future<void> carregarPorTipo(ItemType type) async {
+    if (tableStateNotifier.value['status'] == TableStatus.loading) return;
+
+    tableStateNotifier.value = {
+      'status': TableStatus.loading,
+      'dataObjects': [],
+      'itemType': type,
+    };
+
+    List<dynamic> json = [];
+    try {
+      if (type == ItemType.coffee) {
+        json = await acessarApiCafe();
+      } else if (type == ItemType.beer) {
+        json = await acessarApiCerveja();
+      } else if (type == ItemType.nation) {
+        json = await acessarApiNacoes();
+      }
+      tableStateNotifier.value = {
+        'status': TableStatus.ready,
+        'dataObjects': json,
+        'itemType': type,
+      };
+    } catch (e) {
+      tableStateNotifier.value = {
+        'status': TableStatus.error,
+        'dataObjects': [],
+        'itemType': type,
+      };
+    }
   }
 
   Future<List<dynamic>> acessarApiCafe() async {
@@ -110,32 +160,6 @@ class DataService {
     return json;
   }
 
-  void carregarPorTipo(ItemType type) async {
-    if (temRequisicaoEmCurso()) return;
-
-    if (mudouTipoDeItemRequisitado(type)) {
-      emitirEstadoCarregando(type);
-    }
-
-    switch (type) {
-      case ItemType.coffee:
-        var json = await acessarApiCafe();
-        emitirEstadoPronto(type, json);
-        break;
-      case ItemType.beer:
-        var json = await acessarApiCerveja();
-        emitirEstadoPronto(type, json);
-        break;
-      case ItemType.nation:
-        var json = await acessarApiNacoes();
-        emitirEstadoPronto(type, json);
-        break;
-      default:
-        emitirEstadoPronto(type, []);
-        break;
-    }
-  }
-
   void emitirEstadoOrdenado(
       List<dynamic> objetosOrdenados, int columnIndex, String propriedade, bool crescente) {
     var estado = tableStateNotifier.value;
@@ -145,67 +169,10 @@ class DataService {
     estado['sortAscending'] = crescente;
     tableStateNotifier.value = { ...estado };
   }
-
-  bool temRequisicaoEmCurso() {
-    return tableStateNotifier.value['status'] == TableStatus.loading;
-  }
-
-  bool mudouTipoDeItemRequisitado(ItemType type) {
-    return tableStateNotifier.value['itemType'] != type;
-  }
-
-  void emitirEstadoCarregando(ItemType type) {
-    tableStateNotifier.value = {
-      'status': TableStatus.loading,
-      'dataObjects': [],
-      'itemType': type,
-    };
-  }
-
-  void emitirEstadoPronto(ItemType type, List<dynamic> json) {
-    tableStateNotifier.value = {
-      'itemType': type,
-      'status': TableStatus.ready,
-      'dataObjects': json,
-      'propertyNames': type.properties,
-      'columnNames': type.columns,
-      'sortColumnIndex': 0,
-      'sortAscending': true,
-    };
-  }
-
-  List<dynamic> filtrarComCallback(List<dynamic> objetos, String query, bool Function(dynamic, String) callback) {
-    List<dynamic> itensFiltrados = [];
-    for (var item in objetos) {
-      if (callback(item, query)) {
-        itensFiltrados.add(item);
-      }
-    }
-    return itensFiltrados;
-  }
-
-  void filtrarEstadoAtual(String query) {
-    if (query.length < 3) {
-      return;
-    }
-
-    List<dynamic> objetos = tableStateNotifier.value['dataObjects'] ?? [];
-    if (objetos.isEmpty) return;
-  
-    Filtrador filtro = FiltradorBasicoJSON('name'); // ajusta propriedade conforme necessidade
-    List<dynamic> objetosFiltrados = filtrarComCallback(objetos, query, filtro.deveIncluir);
-    emitirEstadoFiltrado(objetosFiltrados);
-  } 
-
-
-  void emitirEstadoFiltrado(List<dynamic> objetosFiltrados) {
-    var estado = tableStateNotifier.value;
-    estado['dataObjects'] = objetosFiltrados;
-    tableStateNotifier.value = { ...estado };
-  }
 }
 
 final DataService dataService = DataService();
+
 
 void main() {
   MyApp app = MyApp();
@@ -386,6 +353,3 @@ class DataTableWidget extends StatelessWidget {
     );
   }
 }
-
-
-
